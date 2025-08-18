@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: production
+data:
+  AWS_REGION: ap-northeast-2
+  DYNAMODB_ORDERS_TABLE: orders
+  DYNAMODB_PRODUCTS_TABLE: products-table
+  KAFKA_BROKERS: kafka-service.production.svc.cluster.local:9092
+  KAFKA_ENABLED: "false"
