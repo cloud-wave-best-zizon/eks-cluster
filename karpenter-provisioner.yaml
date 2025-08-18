@@ -1,0 +1,63 @@
+apiVersion: karpenter.sh/v1alpha5
+kind: Provisioner
+metadata:
+  name: default
+spec:
+  # Resource requirements for nodes
+  requirements:
+    - key: karpenter.sh/capacity-type
+      operator: In
+      values: ["spot", "on-demand"]
+    - key: kubernetes.io/arch
+      operator: In
+      values: ["arm64"]
+    - key: node.kubernetes.io/instance-type
+      operator: In
+      values:
+        - t4g.small
+        - t4g.medium
+        - t4g.large
+        - m6g.medium
+        - m6g.large
+        - c6g.medium
+        - c6g.large
+  
+  # Node properties
+  limits:
+    resources:
+      cpu: 1000
+      memory: 1000Gi
+  
+  # Taints for new nodes
+  taints:
+    - key: node-role
+      value: app
+      effect: NoSchedule
+  
+  # Labels for new nodes
+  labels:
+    managed-by: karpenter
+    node-type: application
+  
+  # TTL settings
+  ttlSecondsAfterEmpty: 30
+  ttlSecondsUntilExpired: 604800
+  
+  # UserData for node initialization
+  userData: |
+    #!/bin/bash
+    /etc/eks/bootstrap.sh prod
+    echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+    sysctl -p /etc/sysctl.conf
+  
+  # IAM instance profile
+  providerRef:
+    name: default
+
+---
+apiVersion: karpenter.k8s.aws/v1alpha1
+kind: AWSNodeInstanceProfile
+metadata:
+  name: default
+spec:
+  instanceProfile: KarpenterNodeInstanceProfile
