@@ -9,17 +9,23 @@ metadata:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     
-    # 서브넷 지정 (Public)
+    # 서브넷 지정
     alb.ingress.kubernetes.io/subnets: subnet-00a1df66e269743b3,subnet-057b1399a4c256f74
     
-    # Health Check
+    # Health Check 최적화
     alb.ingress.kubernetes.io/healthcheck-path: /api/v1/health
-    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
     alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
     alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
     
-    # HTTP 리스너
+    # HTTP 설정
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    
+    # 성능 최적화
+    alb.ingress.kubernetes.io/load-balancer-attributes: |
+      idle_timeout.timeout_seconds=60,
+      routing.http2.enabled=true
     
     # 태그
     alb.ingress.kubernetes.io/tags: Environment=production,Team=cloud-wave,Project=msa
@@ -40,12 +46,5 @@ spec:
         backend:
           service:
             name: order-service
-            port:
-              number: 80
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: product-service
             port:
               number: 80
