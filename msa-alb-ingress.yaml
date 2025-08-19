@@ -1,47 +1,32 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: msa-alb-ingress
+  name: msa-ingress
   namespace: production
   annotations:
-    # ALB 기본 설정
-    alb.ingress.kubernetes.io/load-balancer-name: prod-msa-alb
+    kubernetes.io.ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    
-    # 서브넷 지정
-    alb.ingress.kubernetes.io/subnets: subnet-00a1df66e269743b3,subnet-057b1399a4c256f74
-    
-    # Health Check 최적화
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
     alb.ingress.kubernetes.io/healthcheck-path: /api/v1/health
-    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
-    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
-    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
-    alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
-    
-    # HTTP 설정
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-    
-    # 성능 최적화
-    alb.ingress.kubernetes.io/load-balancer-attributes: |
-      idle_timeout.timeout_seconds=60,
-      routing.http2.enabled=true
-    
-    # 태그
-    alb.ingress.kubernetes.io/tags: Environment=production,Team=cloud-wave,Project=msa
+    alb.ingress.kubernetes.io/healthcheck-port: 'traffic-port'
+    alb.ingress.kubernetes.io/success-codes: '200'
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]' # HTTP 리스너 명시
+
 spec:
   ingressClassName: alb
   rules:
   - http:
       paths:
-      - path: /products
+      - path: /api/v1/products
         pathType: Prefix
         backend:
           service:
             name: product-service
             port:
               number: 80
-      - path: /orders
+              
+      - path: /api/v1/orders
         pathType: Prefix
         backend:
           service:
