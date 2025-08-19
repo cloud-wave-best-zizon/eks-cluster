@@ -1,446 +1,348 @@
 # EKS Production Cluster Architecture
 
-## 📋 클러스터 개요
+## 🚀 Overview
+Production MSA (Microservice Architecture) environment running on Amazon EKS in ap-northeast-2 region.
 
-### 기본 정보
-- **클러스터명**: prod
-- **Region**: ap-northeast-2 (Seoul)
-- **Kubernetes 버전**: v1.33.3-eks
-- **VPC ID**: vpc-0b2e9abf762494044
-- **생성 시간**: 2025년 8월 18일
+### 📊 Cluster Statistics
+- **Worker Nodes**: 6 (4 ARM64 + 2 Karpenter managed)
+- **Microservices**: 2 (Product Service, Order Service)
+- **Namespaces**: 10
+- **Load Balancers**: 4 (1 ALB, 3 NLB)
 
-### 노드 구성
-| 노드 타입 | 개수 | OS | 인스턴스 타입 |
-|----------|------|----|--------------| 
-| EKS Managed | 4 | Amazon Linux 2023 | t4g.medium (ARM64) |
-| Karpenter | 1 | Bottlerocket | 자동 스케일링 |
+## 🏗️ Architecture Diagram
 
-## 🏗️ 아키텍처 구성도
+```mermaid
+graph TB
+    %% Styling
+    classDef internet fill:#667eea,stroke:#fff,stroke-width:2px,color:#fff
+    classDef alb fill:#f093fb,stroke:#fff,stroke-width:2px,color:#fff
+    classDef public fill:#4caf50,stroke:#fff,stroke-width:2px,color:#fff
+    classDef private fill:#ff9800,stroke:#fff,stroke-width:2px,color:#fff
+    classDef service fill:#3498db,stroke:#fff,stroke-width:2px,color:#fff
+    classDef pod fill:#9b59b6,stroke:#fff,stroke-width:2px,color:#fff
+    classDef monitoring fill:#00bcd4,stroke:#fff,stroke-width:2px,color:#fff
 
+    %% Internet Layer
+    Internet[🌐 Internet]:::internet
+    
+    %% ALB Layer
+    Internet --> ALB[Application Load Balancer<br/>k8s-producti-msaingre-*.elb.amazonaws.com]:::alb
+    
+    %% Ingress
+    ALB --> Ingress[Ingress: msa-ingress<br/>Path-based Routing]
+    
+    %% VPC
+    subgraph VPC[VPC: oliveyoung-prod - 10.1.0.0/16]
+        %% Public Subnets
+        subgraph PublicSubnets[Public Subnets]
+            PubA[Public Subnet 2a<br/>10.1.1.0/24<br/>subnet-00a1df66e269743b3]:::public
+            PubC[Public Subnet 2c<br/>10.1.2.0/24<br/>subnet-057b1399a4c256f74]:::public
+            
+            NAT[NAT Gateway<br/>nat-01bd5bbff1d68472f]
+            PubA --> NAT
+        end
+        
+        %% Private Subnets
+        subgraph PrivateSubnets[Private Subnets - Worker Nodes]
+            subgraph PriA[Private Subnet 2a - 10.1.11.0/24]
+                NodeA1[ip-10-1-11-154<br/>Amazon Linux ARM64]:::private
+                NodeA2[ip-10-1-11-184<br/>Amazon Linux ARM64]:::private
+            end
+            
+            subgraph PriC[Private Subnet 2c - 10.1.12.0/24]
+                NodeC1[ip-10-1-12-64<br/>Amazon Linux ARM64]:::private
+                NodeC2[ip-10-1-12-169<br/>Amazon Linux ARM64]:::private
+                NodeC3[i-0ca8f63396c2f5a20<br/>Bottlerocket Karpenter]:::private
+                NodeC4[i-0e8fcb63c2579bbad<br/>Bottlerocket Karpenter]:::private
+            end
+        end
+        
+        %% Services
+        subgraph Services[Kubernetes Services]
+            SvcProduct[product-service<br/>ClusterIP: 172.20.44.190<br/>Port: 80→8081]:::service
+            SvcOrder[order-service<br/>ClusterIP: 172.20.46.38<br/>Port: 80→8080]:::service
+            SvcKafka[kafka-service<br/>Headless Service<br/>Port: 9092]:::service
+        end
+        
+        %% Pods
+        subgraph Pods[Application Pods]
+            PodProduct1[product-service-8ngzd<br/>10.1.12.161:8081]:::pod
+            PodProduct2[product-service-msh5x<br/>10.1.11.104:8081]:::pod
+            PodOrder1[order-service-n6nvt<br/>10.1.12.58:8080]:::pod
+            PodOrder2[order-service-vfjr9<br/>10.1.11.138:8080]:::pod
+            PodKafka[kafka-0<br/>10.1.12.88:9092]:::pod
+        end
+    end
+    
+    %% Connections
+    Ingress -->|/api/v1/products| SvcProduct
+    Ingress -->|/api/v1/orders| SvcOrder
+    
+    SvcProduct --> PodProduct1
+    SvcProduct --> PodProduct2
+    SvcOrder --> PodOrder1
+    SvcOrder --> PodOrder2
+    SvcKafka --> PodKafka
+    
+    PodProduct1 -.->|Events| PodKafka
+    PodProduct2 -.->|Events| PodKafka
+    PodOrder1 -.->|Events| PodKafka
+    PodOrder2 -.->|Events| PodKafka
+    
+    %% External Services
+    subgraph External[External Services]
+        DynamoDB[(DynamoDB)]
+        ECR[ECR Registry]
+    end
+    
+    PodProduct1 -.->|IAM Role| DynamoDB
+    PodProduct2 -.->|IAM Role| DynamoDB
+    PodOrder1 -.->|IAM Role| DynamoDB
+    PodOrder2 -.->|IAM Role| DynamoDB
 ```
-                    ┌─────────────────────────┐
-                    │      Internet           │
-                    └────────────┬────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │   Internet Gateway      │
-                    │  (igw-081c37b6064f583a2)│
-                    └────────────┬────────────┘
-                                 │
-        ┌────────────────────────┴─────────────────────────┐
-        │                                                  │
-┌───────▼──────────────────┐           ┌───────────────────▼──────────────┐
-│ Public Subnet (2a)       │           │ Public Subnet (2c)               │
-│ subnet-00a1df66e269743b3 │           │ subnet-057b1399a4c256f74         │
-│ 10.1.1.0/24              │           │ 10.1.2.0/24                      │
-│                          │           │                                  │
-│ ┌─────────────────────┐  │           │ ┌──────────────────────────────┐ │
-│ │   NAT Gateway       │  │           │ │  NLB (NGINX Ingress)         │ │
-│ │ nat-01bd5bbff1d68472f│ │           │ │  k8s-ingressn-ingressn-...   │ │
-│ └──────────┬──────────┘  │           │ │  (internet-facing)           │ │
-│            │             │           │ └──────────┬───────────────────┘ │
-└────────────┼─────────────┘           └────────────┼─────────────────────┘
-             │                                      │
-             │                    ┌─────────────────┴─────────────────┐
-             │                    │   Target Group (Backend Nodes)    │
-             │                    └─────────────────┬─────────────────┘
-             │                                      │
-┌────────────▼──────────────┐          ┌────────────▼─────────────────┐
-│ Private Subnet (2a)       │          │ Private Subnet (2c)          │
-│ subnet-079d058e0a15c1637  │          │ subnet-01a954c7b171cc1bd     │
-│ 10.1.11.0/24              │          │ 10.1.12.0/24                 │
-│                           │          │                              │
-│ ┌───────────────────────┐ │          │ ┌──────────────────────────┐ │
-│ │ EKS Worker Nodes      │ │          │ │ EKS Worker Nodes         │ │
-│ │ • i-0eb0acfa7e17b6b3c │ │          │ │ • i-0ca8f63396c2f5a20    │ │
-│ │   (10.1.11.154)       │ │          │ │   (10.1.12.67)           │ │
-│ │ • i-04d6e234acb08a6b5 │ │          │ │ • i-09da7780c423c5401    │ │
-│ │   (10.1.11.184)       │ │          │ │   (10.1.12.169)          │ │
-│ └───────────────────────┘ │          │ │ • i-0ad6eacbd4c6c3030    │ │
-│                           │          │ │   (10.1.12.64)           │ │
-│                           │          │ └──────────────────────────┘ │
-└───────────────────────────┘          └──────────────────────────────┘
+
+## 📋 Request Flow Sequence
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant ALB
+    participant Ingress
+    participant Service
+    participant Pod
+    participant DynamoDB
+    participant Kafka
+    
+    User->>ALB: HTTP Request<br/>/api/v1/products
+    ALB->>Ingress: Route based on path
+    Ingress->>Service: Forward to product-service:80
+    Service->>Pod: Load balance to Pod:8081
+    Pod->>DynamoDB: Query/Write data<br/>(via IAM role)
+    Pod->>Kafka: Publish event
+    Pod-->>Service: Response
+    Service-->>Ingress: Response
+    Ingress-->>ALB: Response
+    ALB-->>User: HTTP Response
 ```
-1. 사용자 → Internet → IGW → NLB (Public Subnet)
-                                ↓
-2. NLB → Target Group → NGINX Ingress Pods (Private Subnet의 Nodes)
-                                ↓
-3. NGINX Ingress → Service (ClusterIP) → Application Pods
 
+## 🔧 Core Components
 
-## 🚀 배포된 서비스
+### Infrastructure
+| Component | Details |
+|-----------|---------|
+| **Cluster Name** | prod |
+| **Kubernetes Version** | v1.33 |
+| **Region** | ap-northeast-2 |
+| **VPC** | oliveyoung-prod (10.1.0.0/16) |
+| **Availability Zones** | ap-northeast-2a, ap-northeast-2c |
 
-### Production 네임스페이스
+### Networking
+| Component | Details |
+|-----------|---------|
+| **Ingress Controller** | AWS Load Balancer Controller |
+| **Load Balancer Type** | Application Load Balancer (ALB) |
+| **Service Type** | ClusterIP (internal) |
+| **Pod Networking** | AWS VPC CNI |
 
-#### 1. Product Service
-- **Image**: `928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/product-service:v5`
-- **Replicas**: 2
-- **Port**: 8081
-- **IAM Role**: `arn:aws:iam::928475935003:role/EKSProductServiceRole`
-- **DynamoDB Table**: `products-table`
-- **API Endpoints**:
-  - GET `/products/api/v1/health` - 헬스체크
-  - POST `/products/api/v1/products` - 상품 생성
-  - GET `/products/api/v1/products/{id}` - 상품 조회
-  - POST `/products/api/v1/products/{id}/deduct` - 재고 차감
+### Nodes
+| Node | Type | Subnet | IP Address |
+|------|------|--------|------------|
+| ip-10-1-11-154 | Amazon Linux ARM64 | Private 2a | 10.1.11.154 |
+| ip-10-1-11-184 | Amazon Linux ARM64 | Private 2a | 10.1.11.184 |
+| ip-10-1-12-64 | Amazon Linux ARM64 | Private 2c | 10.1.12.64 |
+| ip-10-1-12-169 | Amazon Linux ARM64 | Private 2c | 10.1.12.169 |
+| i-0ca8f63396c2f5a20 | Bottlerocket (Karpenter) | Private 2c | 10.1.12.67 |
+| i-0e8fcb63c2579bbad | Bottlerocket (Karpenter) | Private 2c | 10.1.12.192 |
 
-#### 2. Order Service  
-- **Image**: `928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/order-service:v2`
-- **Replicas**: 2
-- **Port**: 8080
-- **IAM Role**: `arn:aws:iam::928475935003:role/EKSOrderServiceRole`
-- **DynamoDB Table**: `orders`
-- **API Endpoints**:
-  - GET `/orders/api/v1/health` - 헬스체크
-  - POST `/orders/api/v1/orders` - 주문 생성
-  - GET `/orders/api/v1/orders/{id}` - 주문 조회
+## 🎯 Microservices
 
-#### 3. Kafka
+### Product Service
+- **Deployment**: 2 replicas
+- **Image**: 928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/product-service:v5
+- **Port**: 8081 (container) → 80 (service)
+- **Resources**: 
+  - Requests: 100m CPU, 128Mi Memory
+  - Limits: 200m CPU, 256Mi Memory
+- **Service Account**: product-service-sa
+
+### Order Service
+- **Deployment**: 2 replicas
+- **Image**: 928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/order-service:latest
+- **Port**: 8080 (container) → 80 (service)
+- **Resources**: 
+  - Requests: 100m CPU, 128Mi Memory
+  - Limits: 200m CPU, 256Mi Memory
+- **Service Account**: order-service-sa
+
+### Kafka
 - **Type**: StatefulSet
 - **Replicas**: 1
 - **Port**: 9092
-- **Service**: `kafka-service.production.svc.cluster.local`
-- **Topics**: `order-events`
+- **Service Type**: Headless
 
-## 📊 모니터링 스택
+## 📊 Monitoring Stack
 
-### Prometheus Stack
+```mermaid
+graph LR
+    subgraph Monitoring
+        Prometheus[📊 Prometheus<br/>Metrics Collection]
+        Grafana[📈 Grafana<br/>Visualization]
+        Loki[📝 Loki<br/>Log Aggregation]
+        Tempo[🔍 Tempo<br/>Distributed Tracing]
+        Promtail[🎯 Promtail<br/>Log Shipper]
+        Headlamp[👁️ Headlamp<br/>K8s Dashboard]
+    end
+    
+    Prometheus --> Grafana
+    Promtail --> Loki
+    Loki --> Grafana
+    Tempo --> Grafana
+```
+
+## 🚀 System Components
+
+| Component | Purpose | Namespace |
+|-----------|---------|-----------|
+| **AWS Load Balancer Controller** | Manages ALB/NLB | kube-system |
+| **Karpenter** | Node autoscaling | karpenter |
+| **ArgoCD** | GitOps deployment | argocd |
+| **CoreDNS** | Service discovery | kube-system |
+| **EBS CSI Driver** | Storage management | kube-system |
+| **Metrics Server** | Resource metrics | kube-system |
+
+## 📝 Ingress Rules
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: msa-ingress
+  namespace: production
+spec:
+  ingressClassName: alb
+  rules:
+  - http:
+      paths:
+      - path: /api/v1/products
+        pathType: Prefix
+        backend:
+          service:
+            name: product-service
+            port:
+              number: 80
+      - path: /api/v1/orders
+        pathType: Prefix
+        backend:
+          service:
+            name: order-service
+            port:
+              number: 80
+```
+
+## 🔒 Security Configuration
+
+### Network Security
+- ✅ Worker nodes in private subnets
+- ✅ NAT Gateway for outbound traffic
+- ✅ Security groups for network isolation
+- ✅ Network policies for pod-to-pod communication
+
+### IAM & RBAC
+- ✅ IRSA (IAM Roles for Service Accounts)
+- ✅ Separate service accounts per microservice
+- ✅ Least privilege IAM policies
+- ✅ RBAC for namespace isolation
+
+### Data Protection
+- ✅ EBS encryption at rest
+- ✅ TLS for service-to-service communication
+- ✅ Secrets management via K8s Secrets
+
+## 📦 Storage
+
+| Storage Class | Provisioner | Type | Binding Mode |
+|--------------|-------------|------|--------------|
+| gp2 | kubernetes.io/aws-ebs | gp2 | WaitForFirstConsumer |
+| gp3 | ebs.csi.aws.com | gp3 | WaitForFirstConsumer |
+
+## 🔄 CI/CD Pipeline
+
+```mermaid
+graph LR
+    Git[Git Repository] --> ArgoCD[ArgoCD]
+    ArgoCD --> Sync{Sync Status}
+    Sync -->|OutOfSync| Deploy[Deploy Changes]
+    Sync -->|Synced| Monitor[Monitor]
+    Deploy --> Validate[Validate Deployment]
+    Validate --> Monitor
+```
+
+## 📌 Access Points
+
+### External Access
+- **ALB Endpoint**: http://k8s-producti-msaingre-a832bcc2c1-1931180001.ap-northeast-2.elb.amazonaws.com
 - **Grafana**: http://aa0f272db301b40e19218d5f38ace125-16d29c4eba987a3e.elb.ap-northeast-2.amazonaws.com
-- **Prometheus**: Internal ClusterIP
-- **AlertManager**: Configured
-- **Node Exporter**: DaemonSet on all nodes
-
-### Loki Stack
-- **Version**: 2.9.13
-- **Components**: Distributor, Ingester, Querier, Query-Frontend
-- **Promtail**: DaemonSet for log collection
-
-### Kubernetes Dashboard
 - **Headlamp**: http://ad610fdaa91464022ae22e719a53a468-0ff550a48fbe1c01.elb.ap-northeast-2.amazonaws.com
 
-## 🌐 네트워킹
+### API Endpoints
+- **Product Service**: `/api/v1/products`
+- **Order Service**: `/api/v1/orders`
+- **Health Check**: `/api/v1/health`
 
-### Ingress
-- **Controller**: NGINX Ingress Controller
-- **LoadBalancer**: k8s-ingressn-ingressn-c6a927d7ff-cb6fb2f096d5debb.elb.ap-northeast-2.amazonaws.com
-- **Routes**:
-  - `/products/*` → product-service:80
-  - `/orders/*` → order-service:80
+## 🛠️ Deployment Commands
 
-### Service Endpoints
 ```bash
-# Export LoadBalancer URL
-export LB_URL="http://k8s-ingressn-ingressn-c6a927d7ff-cb6fb2f096d5debb.elb.ap-northeast-2.amazonaws.com"
+# Deploy with kubectl
+kubectl apply -f eks-cluster-config.yaml
 
-# Product API 테스트
-curl $LB_URL/products/api/v1/health
+# Check deployment status
+kubectl get all -n production
 
-# Order API 테스트
-curl $LB_URL/orders/api/v1/health
-
-# 상품 생성
-curl -X POST $LB_URL/products/api/v1/products \
-  -H "Content-Type: application/json" \
-  -d '{
-    "product_id": "TEST001",
-    "name": "Test Product",
-    "stock": 100,
-    "price": 10000
-  }'
-
-# 주문 생성
-curl -X POST $LB_URL/orders/api/v1/orders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "test_user",
-    "items": [{
-      "product_id": "TEST001",
-      "product_name": "Test Product",
-      "quantity": 5,
-      "price": 10000
-    }],
-    "idempotency_key": "test-123"
-  }'
-```
-
-## 🔧 설정 관리
-
-### ConfigMap: app-config
-```yaml
-AWS_REGION: ap-northeast-2
-DYNAMODB_ORDERS_TABLE: orders
-DYNAMODB_PRODUCTS_TABLE: products-table
-KAFKA_BROKERS: kafka-service.production.svc.cluster.local:9092
-KAFKA_ENABLED: "false"  # 환경변수로 true 오버라이드됨
-```
-
-### ServiceAccounts (IRSA)
-- `order-service-sa`: EKSOrderServiceRole
-- `product-service-sa`: EKSProductServiceRole
-
-### 환경변수 오버라이드
-```yaml
-# Product Service
-KAFKA_BROKERS: kafka-service.production.svc.cluster.local:9092
-KAFKA_ENABLED: true
-
-# Order Service
-KAFKA_BROKERS: kafka-service.production.svc.cluster.local:9092
-```
-
-## 📦 자동 스케일링
-
-### Karpenter
-- **Version**: v0.31.0
-- **Provisioner**: default
-- **Node Selection**: ARM64 우선
-- **Spot Instance**: 활성화
-
-### HPA (Horizontal Pod Autoscaler)
-- 현재 비활성화
-- 추후 설정 예정 (CPU 70% 기준)
-
-## 🗂️ 네임스페이스별 리소스 현황
-
-| Namespace | Pods | Services | Deployments | StatefulSets | DaemonSets |
-|-----------|------|----------|-------------|--------------|------------|
-| production | 5 | 3 | 2 | 1 | 0 |
-| default | 26 | 28 | 10 | 6 | 2 |
-| ingress-nginx | 5 | 3 | 0 | 0 | 1 |
-| karpenter | 2 | 1 | 1 | 0 | 0 |
-| kube-system | 18 | 10 | 3 | 0 | 4 |
-
-## 🛠️ 관리 명령어
-
-### 로그 확인
-```bash
-# Product Service 로그
+# View logs
 kubectl logs -f deployment/product-service -n production
 
-# Order Service 로그
-kubectl logs -f deployment/order-service -n production
-
-# Kafka 로그
-kubectl logs -f kafka-0 -n production
-
-# 특정 Pod 로그
-kubectl logs -f <pod-name> -n production
-
-# 이전 Pod 로그 (재시작된 경우)
-kubectl logs <pod-name> -n production --previous
-```
-
-### 배포 업데이트
-```bash
-# 이미지 업데이트
-kubectl set image deployment/product-service \
-  product-service=928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/product-service:v6 \
-  -n production
-
-# 롤아웃 상태 확인
-kubectl rollout status deployment/product-service -n production
-
-# 롤아웃 히스토리
-kubectl rollout history deployment/product-service -n production
-
-# 롤백
-kubectl rollout undo deployment/product-service -n production
-```
-
-### 스케일링
-```bash
-# 수동 스케일링
+# Scale deployment
 kubectl scale deployment product-service --replicas=3 -n production
 
-# 현재 replica 확인
-kubectl get deployment -n production
+# Port forward for debugging
+kubectl port-forward service/product-service 8080:80 -n production
 ```
 
-### Pod 관리
-```bash
-# Pod 재시작
-kubectl rollout restart deployment/product-service -n production
+## 📈 Performance Metrics
 
-# Pod 삭제 (자동 재생성)
-kubectl delete pod <pod-name> -n production
+- **Target CPU Utilization**: 70%
+- **Request Timeout**: 30s
+- **Health Check Interval**: 15s
+- **Pod Disruption Budget**: 1 (minimum available)
 
-# Pod 상세 정보
-kubectl describe pod <pod-name> -n production
+## 🔍 Troubleshooting
 
-# Pod 접속
-kubectl exec -it <pod-name> -n production -- /bin/sh
-```
+### Common Issues
 
-## 📝 CI/CD 파이프라인
+1. **Pod not starting**
+   ```bash
+   kubectl describe pod <pod-name> -n production
+   kubectl logs <pod-name> -n production
+   ```
 
-### ECR 리포지토리
-- `928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/product-service`
-- `928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/order-service`
+2. **Service not reachable**
+   ```bash
+   kubectl get endpoints -n production
+   kubectl get ingress -n production
+   ```
 
-### 빌드 및 배포 프로세스
-```bash
-# 1. ECR 로그인
-aws ecr get-login-password --region ap-northeast-2 | \
-  docker login --username AWS --password-stdin \
-  928475935003.dkr.ecr.ap-northeast-2.amazonaws.com
+3. **Node issues**
+   ```bash
+   kubectl get nodes
+   kubectl describe node <node-name>
+   ```
 
-# 2. 이미지 빌드 (ARM64)
-docker buildx build --platform linux/arm64 \
-  -t 928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/product-service:v6 \
-  --push .
+## 📚 Additional Resources
 
-# 3. Kubernetes 배포
-kubectl set image deployment/product-service \
-  product-service=928475935003.dkr.ecr.ap-northeast-2.amazonaws.com/product-service:v6 \
-  -n production
-
-# 4. 배포 확인
-kubectl rollout status deployment/product-service -n production
-```
-
-## 🔐 보안
-
-### IAM Roles (IRSA)
-- Pod가 AWS 서비스에 접근 시 IAM Role 사용
-- DynamoDB 접근 권한 포함
-- 최소 권한 원칙 적용
-
-### Network Policies
-- 현재 미적용
-- 추후 구성 예정
-
-### Secrets Management
-- 현재 ConfigMap 사용
-- AWS Secrets Manager 연동 예정
-
-## 📈 모니터링 대시보드
-
-### Grafana 대시보드
-1. **Kubernetes Cluster Overview**
-   - 노드 상태
-   - 리소스 사용률
-   - Pod 상태
-
-2. **Application Metrics**
-   - Request/Response 시간
-   - Error Rate
-   - Throughput
-
-3. **NGINX Ingress Controller**
-   - Request Rate
-   - Response Time
-   - Error Rate by Service
-
-4. **Node Exporter Full**
-   - CPU/Memory/Disk 사용률
-   - Network I/O
-
-### 주요 메트릭
-- **SLI (Service Level Indicators)**
-  - Availability > 99.9%
-  - Response Time < 200ms (P95)
-  - Error Rate < 1%
-
-- **리소스 사용률**
-  - CPU: 평균 20%, 최대 60%
-  - Memory: 평균 30%, 최대 70%
-
-## 🚨 트러블슈팅
-
-### 일반적인 문제 해결
-
-#### Pod가 시작되지 않을 때
-```bash
-# Pod 상태 확인
-kubectl get pods -n production
-
-# Pod 이벤트 확인
-kubectl describe pod <pod-name> -n production
-
-# Pod 로그 확인
-kubectl logs <pod-name> -n production
-```
-
-#### Kafka 연결 실패
-```bash
-# Kafka 상태 확인
-kubectl get pod kafka-0 -n production
-
-# Kafka 토픽 확인
-kubectl exec -it kafka-0 -n production -- \
-  kafka-topics.sh --list --bootstrap-server localhost:9092
-
-# Consumer Group 확인
-kubectl exec -it kafka-0 -n production -- \
-  kafka-consumer-groups.sh --list --bootstrap-server localhost:9092
-```
-
-#### DynamoDB 연결 테스트
-```bash
-# DynamoDB 테이블 목록
-aws dynamodb list-tables --region ap-northeast-2
-
-# 테이블 항목 확인
-aws dynamodb scan --table-name products-table \
-  --region ap-northeast-2 --max-items 5
-```
-
-#### 이미지 Pull 실패
-```bash
-# ECR 로그인 재시도
-aws ecr get-login-password --region ap-northeast-2 | \
-  docker login --username AWS --password-stdin \
-  928475935003.dkr.ecr.ap-northeast-2.amazonaws.com
-
-# ImagePullBackOff 해결
-kubectl delete pod <pod-name> -n production
-```
-
-## 📚 추가 리소스
-
-### GitHub 리포지토리
-- [Product Service](https://github.com/cloud-wave-best-zizon/product-service)
-- [Order Service](https://github.com/cloud-wave-best-zizon/order-service)
-
-### AWS 리소스
-- **DynamoDB Tables**:
-  - `products-table`
-  - `orders`
-- **ECR Repositories**:
-  - `product-service`
-  - `order-service`
-
-### 유용한 도구
-- [K9s](https://k9scli.io/) - Kubernetes CLI UI
-- [Lens](https://k8slens.dev/) - Kubernetes IDE
-- [kubectl-tree](https://github.com/ahmetb/kubectl-tree) - Resource hierarchy viewer
-
-## 🔄 백업 및 복구
-
-### DynamoDB 백업
-```bash
-# On-demand 백업
-aws dynamodb create-backup \
-  --table-name products-table \
-  --backup-name products-backup-$(date +%Y%m%d) \
-  --region ap-northeast-2
-
-# 백업 목록 확인
-aws dynamodb list-backups \
-  --table-name products-table \
-  --region ap-northeast-2
-```
-
-### Kubernetes 리소스 백업
-```bash
-# 네임스페이스 전체 백업
-kubectl get all -n production -o yaml > production-backup.yaml
-
-# ConfigMap 백업
-kubectl get configmap -n production -o yaml > configmaps-backup.yaml
-```
+- [AWS EKS Documentation](https://docs.aws.amazon.com/eks/)
+- [Kubernetes Documentation](https://kubernetes.io/docs/)
+- [AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/)
+- [Karpenter Documentation](https://karpenter.sh/)
 
 ---
-*Last Updated: 2025-08-18*  
-*Maintained by: Cloud Wave Best Zizon Team*  
-*Version: 1.0.0*
+*Generated: 2025-08-19 | Cluster: prod | Region: ap-northeast-2*
