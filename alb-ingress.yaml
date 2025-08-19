@@ -1,0 +1,42 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: msa-alb-ingress
+  namespace: production
+  annotations:
+    # ALB 설정
+    alb.ingress.kubernetes.io/load-balancer-name: prod-msa-alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    
+    # 서브넷 지정 (Public)
+    alb.ingress.kubernetes.io/subnets: subnet-00a1df66e269743b3,subnet-057b1399a4c256f74
+    
+    # Health Check
+    alb.ingress.kubernetes.io/healthcheck-path: /api/v1/health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+    
+    # 리스너 설정
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    
+    # 태그
+    alb.ingress.kubernetes.io/tags: Environment=production,Team=cloud-wave
+spec:
+  ingressClassName: alb
+  rules:
+  - http:
+      paths:
+      - path: /products
+        pathType: Prefix
+        backend:
+          service:
+            name: product-service
+            port:
+              number: 80
+      - path: /orders
+        pathType: Prefix
+        backend:
+          service:
+            name: order-service
+            port:
+              number: 80
