@@ -4,7 +4,7 @@ metadata:
   name: msa-alb-ingress
   namespace: production
   annotations:
-    # ALB 설정
+    # ALB 기본 설정
     alb.ingress.kubernetes.io/load-balancer-name: prod-msa-alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
@@ -15,12 +15,14 @@ metadata:
     # Health Check
     alb.ingress.kubernetes.io/healthcheck-path: /api/v1/health
     alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
     
-    # 리스너 설정
+    # HTTP 리스너
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
     
     # 태그
-    alb.ingress.kubernetes.io/tags: Environment=production,Team=cloud-wave
+    alb.ingress.kubernetes.io/tags: Environment=production,Team=cloud-wave,Project=msa
 spec:
   ingressClassName: alb
   rules:
@@ -38,5 +40,12 @@ spec:
         backend:
           service:
             name: order-service
+            port:
+              number: 80
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: product-service
             port:
               number: 80
