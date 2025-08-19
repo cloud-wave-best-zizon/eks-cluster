@@ -1,0 +1,59 @@
+# Application Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: production
+  labels:
+    app: microservices
+    environment: production
+data:
+  # AWS Configuration
+  AWS_REGION: "ap-northeast-2"
+  
+  # DynamoDB Tables
+  DYNAMODB_PRODUCTS_TABLE: "products"
+  DYNAMODB_ORDERS_TABLE: "orders"
+  
+  # Kafka Configuration
+  KAFKA_ENABLED: "true"
+  KAFKA_BROKERS: "kafka-service.production.svc.cluster.local:9092"
+  KAFKA_TOPIC_PRODUCTS: "product-events"
+  KAFKA_TOPIC_ORDERS: "order-events"
+  
+  # Service Endpoints (Internal)
+  PRODUCT_SERVICE_URL: "http://product-service.production.svc.cluster.local"
+  ORDER_SERVICE_URL: "http://order-service.production.svc.cluster.local"
+  
+  # Application Settings
+  LOG_LEVEL: "info"
+  ENVIRONMENT: "production"
+  
+---
+# Monitoring Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-config
+  namespace: production
+  labels:
+    app: monitoring
+    environment: production
+data:
+  # Prometheus Endpoints
+  PROMETHEUS_URL: "http://kube-prometheus-kube-prome-prometheus.default.svc.cluster.local:9090"
+  
+  # Grafana Configuration
+  GRAFANA_URL: "http://kube-prometheus-grafana.default.svc.cluster.local:80"
+  
+  # Loki Configuration
+  LOKI_URL: "http://loki-gateway.default.svc.cluster.local:80"
+  
+  # Tempo Configuration
+  TEMPO_URL: "http://tempo-query-frontend.default.svc.cluster.local:3200"
+  
+  # Metrics Settings
+  METRICS_PORT: "8080"
+  METRICS_PATH: "/metrics"
+  ENABLE_METRICS: "true"
+  ENABLE_TRACING: "true"
