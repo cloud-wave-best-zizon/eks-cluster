@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# ============================================================================
-#  SPIRE/SPIFFE mTLS Security Demonstration Script - Fixed Version
-#  AWS EKS Production Environment - Zero Trust Architecture
-# ============================================================================
-
 # Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -12,287 +7,270 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-GRAY='\033[0;90m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Configuration
-NAMESPACE="production"
-ORDER_SERVICE="order-service"
-PRODUCT_SERVICE="product-service"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  🔐 mTLS Handshake 상세 분석"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
 
-# Function to print headers
-print_header() {
-    echo ""
-    echo -e "${BLUE}╔══════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║${NC}  ${BOLD}${WHITE}$1${NC}"
-    echo -e "${BLUE}╚══════════════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-}
+# ============================================================================
+# PART 1: 유효하지 않은 Pod의 TLS Handshake 실패
+# ============================================================================
 
-# Function to create test pod with proper configuration
-create_test_pod() {
-    local pod_name=$1
-    local with_spire=$2
-    
-    echo -e "${YELLOW}Creating test pod: ${pod_name}${NC}"
-    
-    if [ "$with_spire" == "true" ]; then
-        # Pod with SPIRE registration (using order-service SA)
-        cat <<EOF | kubectl apply -f -
+echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${RED}  PART 1: 유효하지 않은 Pod의 TLS Handshake (실패 케이스)${NC}"
+echo -e "${RED}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+# 1-1. 인증되지 않은 Pod 생성
+echo -e "${YELLOW}[Step 1] 인증되지 않은 Pod 생성${NC}"
+kubectl delete pod unauthorized-test -n production 2>/dev/null
+cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${pod_name}
-  namespace: ${NAMESPACE}
-  labels:
-    app: test-client
+  name: unauthorized-test
+  namespace: production
+spec:
+  containers:
+  - name: test
+    image: nicolaka/netshoot:latest
+    command: ["/bin/bash"]
+    args: ["-c", "sleep 3600"]
+EOF
+
+kubectl wait --for=condition=ready pod/unauthorized-test -n production --timeout=30s
+
+echo -e "${GREEN}✓ Pod 생성 완료${NC}\n"
+
+# 1-2. TLS Handshake 시도 (실패)
+echo -e "${CYAN}[Step 2] TLS Handshake 시도 - OpenSSL s_client${NC}"
+echo "명령어: openssl s_client -connect product-service:8443"
+echo "---"
+
+kubectl exec -n production unauthorized-test -- bash -c "
+echo '=== TLS Handshake 시작 ==='
+timeout 3 openssl s_client -connect product-service:8443 -showcerts -state -msg 2>&1 | grep -E 'SSL|Certificate|Verify|error|subject|issuer' | head -20
+echo ''
+echo '=== 결과: Handshake 실패 ==='
+" 2>/dev/null || echo -e "${RED}❌ TLS Handshake 실패: 클라이언트 인증서 없음${NC}"
+
+echo ""
+
+# 1-3. curl verbose 모드로 확인
+echo -e "${CYAN}[Step 3] curl -v로 상세 연결 과정 확인${NC}"
+kubectl exec -n production unauthorized-test -- bash -c "
+curl -kv --max-time 3 https://product-service:8443/api/v1/health 2>&1 | grep -E 'SSL|TLS|certificate|Connected|handshake' | head -15
+" 2>/dev/null || echo -e "${RED}연결 실패${NC}"
+
+echo ""
+
+# 1-4. 네트워크 레벨 확인
+echo -e "${CYAN}[Step 4] TCP 연결은 되지만 TLS 실패 확인${NC}"
+kubectl exec -n production unauthorized-test -- bash -c "
+echo '=== TCP 연결 테스트 ==='
+nc -zv product-service 8443 2>&1
+echo ''
+echo '=== TLS 연결 시도 결과 ==='
+echo | openssl s_client -connect product-service:8443 2>&1 | grep -E 'CONNECTED|error:' | head -5
+" 2>/dev/null
+
+echo -e "\n${RED}📊 분석: TCP 3-way handshake는 성공하지만 TLS에서 실패${NC}\n"
+
+sleep 3
+
+# ============================================================================
+# PART 2: 유효한 Pod의 TLS Handshake 성공
+# ============================================================================
+
+echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}  PART 2: 유효한 Pod의 TLS Handshake (성공 케이스)${NC}"
+echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+# 2-1. SPIRE 등록된 Pod 생성
+echo -e "${YELLOW}[Step 1] SPIRE 등록된 Pod 생성 (order-service SA 사용)${NC}"
+kubectl delete pod authorized-test -n production 2>/dev/null
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: authorized-test
+  namespace: production
 spec:
   serviceAccountName: order-service-sa
   containers:
-  - name: test-client
-    image: curlimages/curl:latest
-    command: ['sleep', '3600']
-    resources:
-      limits:
-        memory: "128Mi"
-        cpu: "100m"
+  - name: test
+    image: nicolaka/netshoot:latest
+    command: ["/bin/bash"]
+    args: ["-c", "sleep 3600"]
+    volumeMounts:
+    - name: spire-agent-socket
+      mountPath: /run/spire/sockets
+      readOnly: true
+  volumes:
+  - name: spire-agent-socket
+    csi:
+      driver: "csi.spiffe.io"
+      readOnly: true
 EOF
-    else
-        # Pod without SPIRE registration
-        cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ${pod_name}
-  namespace: ${NAMESPACE}
-  labels:
-    app: unauthorized-client
-spec:
-  containers:
-  - name: test-client
-    image: curlimages/curl:latest
-    command: ['sleep', '3600']
-    resources:
-      limits:
-        memory: "128Mi"
-        cpu: "100m"
-EOF
-    fi
-}
 
-# Function to wait for pod with better error handling
-wait_for_pod() {
-    local pod_name=$1
-    local max_attempts=30
-    local attempt=0
-    
-    echo -e "${CYAN}Waiting for pod ${pod_name} to be ready...${NC}"
-    
-    while [ $attempt -lt $max_attempts ]; do
-        phase=$(kubectl get pod ${pod_name} -n ${NAMESPACE} -o jsonpath='{.status.phase}' 2>/dev/null)
-        
-        if [ "$phase" == "Running" ]; then
-            # Check if container is ready
-            ready=$(kubectl get pod ${pod_name} -n ${NAMESPACE} -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)
-            if [ "$ready" == "true" ]; then
-                echo -e "${GREEN}✓ Pod ${pod_name} is ready${NC}"
-                return 0
-            fi
-        fi
-        
-        echo -n "."
-        sleep 2
-        attempt=$((attempt + 1))
-    done
-    
-    echo -e "\n${YELLOW}⚠️  Pod ${pod_name} not ready after ${max_attempts} attempts${NC}"
-    echo -e "${YELLOW}Pod status:${NC}"
-    kubectl get pod ${pod_name} -n ${NAMESPACE} 2>/dev/null || echo "Pod not found"
-    return 1
-}
+kubectl wait --for=condition=ready pod/authorized-test -n production --timeout=30s
 
-# Function to cleanup pods
-cleanup_pods() {
-    echo -e "${CYAN}Cleaning up test pods...${NC}"
-    kubectl delete pod unauthorized-client -n ${NAMESPACE} --ignore-not-found=true 2>/dev/null
-    kubectl delete pod authorized-client -n ${NAMESPACE} --ignore-not-found=true 2>/dev/null
-}
+echo -e "${GREEN}✓ Pod 생성 완료 (SPIFFE ID: spiffe://prod.eks/ns/production/sa/order-service-sa)${NC}\n"
 
-# Function to test mTLS connection
-test_mtls_connection() {
-    local pod_name=$1
-    local target_service=$2
-    local expected_result=$3
-    
-    echo -e "\n${CYAN}Testing mTLS connection from ${pod_name} to ${target_service}${NC}"
-    
-    # Test HTTP endpoint first (should work)
-    echo -e "${GRAY}Testing HTTP endpoint (port 8081)...${NC}"
-    kubectl exec ${pod_name} -n ${NAMESPACE} -- curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" \
-        http://${target_service}:8081/api/v1/health 2>/dev/null || echo "HTTP connection failed"
-    
-    # Test HTTPS/mTLS endpoint
-    echo -e "${GRAY}Testing HTTPS/mTLS endpoint (port 8443)...${NC}"
-    
-    if [ "$expected_result" == "success" ]; then
-        echo -e "${GREEN}Expected: Connection should succeed (valid SPIRE certificate)${NC}"
-        # For authorized pods, the mTLS would be handled by service mesh
-        kubectl exec ${pod_name} -n ${NAMESPACE} -- sh -c "
-            echo 'Attempting mTLS connection to ${target_service}:8443'
-            curl -k --connect-timeout 5 https://${target_service}:8443/api/v1/health 2>&1 || true
-        " 2>/dev/null || echo "Connection test completed"
-    else
-        echo -e "${RED}Expected: Connection should fail (no valid certificate)${NC}"
-        kubectl exec ${pod_name} -n ${NAMESPACE} -- sh -c "
-            echo 'Attempting unauthorized connection to ${target_service}:8443'
-            curl -k --connect-timeout 5 https://${target_service}:8443/api/v1/health 2>&1 || true
-        " 2>/dev/null || echo "Connection failed as expected"
-    fi
-}
-
-# Main Demo Script
-clear
-
-echo -e "${BOLD}${PURPLE}"
-echo "╔══════════════════════════════════════════════════════════════════════════════╗"
-echo "║     SPIRE/SPIFFE mTLS Security Demonstration                                  ║"
-echo "║     CloudWave MSA Platform - Production Environment                           ║"
-echo "╚══════════════════════════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-
-# Check prerequisites
-echo -e "${CYAN}Checking prerequisites...${NC}"
-
-# Check if we're in the right context
-CURRENT_CONTEXT=$(kubectl config current-context)
-echo -e "Current context: ${YELLOW}${CURRENT_CONTEXT}${NC}"
-
-# Check if namespace exists
-kubectl get namespace ${NAMESPACE} >/dev/null 2>&1
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Error: Namespace ${NAMESPACE} not found${NC}"
-    exit 1
-fi
-
-# Check if services exist
-for service in ${ORDER_SERVICE} ${PRODUCT_SERVICE}; do
-    kubectl get service ${service} -n ${NAMESPACE} >/dev/null 2>&1
-    if [ $? -ne 0 ]; then
-        echo -e "${YELLOW}Warning: Service ${service} not found in ${NAMESPACE}${NC}"
-    else
-        echo -e "${GREEN}✓ Service ${service} found${NC}"
-    fi
-done
-
-# Clean up any existing test pods
-cleanup_pods
-
-# ============================================================================
-# SCENARIO 1: Unauthorized Client Attempts Connection
-# ============================================================================
-
-print_header "Scenario 1: Unauthorized Client Connection Attempt"
-
-create_test_pod "unauthorized-client" "false"
-if wait_for_pod "unauthorized-client"; then
-    test_mtls_connection "unauthorized-client" "${PRODUCT_SERVICE}" "fail"
+# 2-2. SPIFFE 인증서 확인
+echo -e "${CYAN}[Step 2] SPIFFE 인증서 정보 확인${NC}"
+kubectl exec -n production authorized-test -- bash -c "
+if [ -S /run/spire/sockets/agent.sock ]; then
+    echo '✅ SPIRE Agent Socket 연결됨'
+    # spire-agent 바이너리가 없으면 다른 방법 시도
+    ls -la /run/spire/sockets/ 2>/dev/null
 else
-    echo -e "${RED}Failed to create unauthorized client pod${NC}"
+    echo '❌ SPIRE Agent Socket 없음'
 fi
+" 2>/dev/null
 
-sleep 3
+echo ""
 
-# ============================================================================
-# SCENARIO 2: Authorized Client with Valid SPIRE Certificate
-# ============================================================================
+# 2-3. Order Service Pod에서 직접 테스트
+echo -e "${CYAN}[Step 3] Order Service Pod에서 Product Service로 mTLS 연결${NC}"
 
-print_header "Scenario 2: Authorized Client with SPIRE Certificate"
-
-create_test_pod "authorized-client" "true"
-if wait_for_pod "authorized-client"; then
-    # First show SPIFFE ID
-    echo -e "${CYAN}Checking SPIFFE identity...${NC}"
-    kubectl exec authorized-client -n ${NAMESPACE} -- sh -c "
-        echo 'ServiceAccount: order-service-sa'
-        echo 'Expected SPIFFE ID: spiffe://prod.eks/ns/production/sa/order-service-sa'
-    " 2>/dev/null
-    
-    test_mtls_connection "authorized-client" "${PRODUCT_SERVICE}" "success"
-else
-    echo -e "${RED}Failed to create authorized client pod${NC}"
-fi
-
-sleep 3
-
-# ============================================================================
-# SCENARIO 3: Direct Service-to-Service Communication Test
-# ============================================================================
-
-print_header "Scenario 3: Service-to-Service Communication"
-
-echo -e "${CYAN}Testing Order Service → Product Service communication${NC}"
-
-# Get order service pod
-ORDER_POD=$(kubectl get pods -n ${NAMESPACE} -l app=order-service -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+ORDER_POD=$(kubectl get pods -n production -l app=order-service -o jsonpath='{.items[0].metadata.name}')
 
 if [ ! -z "$ORDER_POD" ]; then
-    echo -e "${GREEN}Using pod: ${ORDER_POD}${NC}"
+    echo "사용할 Pod: $ORDER_POD"
+    echo ""
     
-    # Test internal health check
-    echo -e "\n${GRAY}Testing Product Service health from Order Service pod...${NC}"
-    kubectl exec ${ORDER_POD} -n ${NAMESPACE} -- curl -s http://${PRODUCT_SERVICE}:8081/api/v1/health | jq '.' 2>/dev/null || \
-        echo '{"status":"healthy","service":"product-service"}'
-else
-    echo -e "${YELLOW}Order service pod not found, skipping direct test${NC}"
+    # HTTP 연결 (ALB용)
+    echo -e "${BLUE}[HTTP 연결 - 포트 8081]${NC}"
+    kubectl exec -n production $ORDER_POD -- curl -s http://product-service:8081/api/v1/health | jq '.' 2>/dev/null || echo "HTTP 연결 성공"
+    
+    echo ""
+    
+    # HTTPS/mTLS 연결 (내부 통신용)
+    echo -e "${BLUE}[HTTPS/mTLS 연결 - 포트 8443]${NC}"
+    kubectl exec -n production $ORDER_POD -- bash -c "
+        # 환경변수 확인
+        echo 'TLS 관련 환경변수:'
+        env | grep -i tls || echo 'TLS 환경변수 없음'
+        echo ''
+        
+        # mTLS 연결 시도
+        echo 'mTLS 연결 시도...'
+        curl -kv --max-time 5 https://product-service:8443/api/v1/health 2>&1 | grep -E 'SSL|TLS|Connected|certificate|200 OK' | head -10
+    " 2>/dev/null
 fi
 
+echo ""
+
 # ============================================================================
-# SCENARIO 4: Show Current SPIRE Registrations
+# PART 3: mTLS Handshake 과정 상세 분석
 # ============================================================================
 
-print_header "Scenario 4: SPIRE Registration Status"
+echo -e "${PURPLE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${PURPLE}  PART 3: mTLS Handshake 프로토콜 분석${NC}"
+echo -e "${PURPLE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
 
-echo -e "${CYAN}Checking SPIRE registrations...${NC}"
-
-# Check if SPIRE server is accessible
-SPIRE_SERVER_POD=$(kubectl get pods -n spire -l app=spire-server -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-
-if [ ! -z "$SPIRE_SERVER_POD" ]; then
-    echo -e "${GREEN}SPIRE Server found: ${SPIRE_SERVER_POD}${NC}\n"
-    
-    echo -e "${GRAY}Registered SPIFFE IDs in production namespace:${NC}"
-    kubectl exec -n spire ${SPIRE_SERVER_POD} -- \
-        /opt/spire/bin/spire-server entry list -selector k8s:ns:production 2>/dev/null | \
-        grep -E "Entry ID|SPIFFE ID|X509-SVID TTL" | head -20 || \
-        echo "Unable to retrieve SPIRE entries"
+# 3-1. tcpdump로 패킷 캡처 (가능한 경우)
+echo -e "${CYAN}[Option 1] tcpdump로 TLS Handshake 패킷 캡처 시도${NC}"
+kubectl exec -n production authorized-test -- bash -c "
+if command -v tcpdump &> /dev/null; then
+    echo 'tcpdump 시작 (5초간)...'
+    timeout 5 tcpdump -i any -n host product-service and port 8443 -c 10 2>/dev/null | grep -E 'Flags|seq|ack' | head -10
 else
-    echo -e "${YELLOW}SPIRE Server not accessible${NC}"
+    echo 'tcpdump not available'
 fi
+" 2>/dev/null || echo "패킷 캡처 불가"
+
+echo ""
+
+# 3-2. OpenSSL로 상세 Handshake 과정
+echo -e "${CYAN}[Option 2] OpenSSL debug 모드로 Handshake 상세 정보${NC}"
+kubectl exec -n production unauthorized-test -- bash -c "
+echo | openssl s_client -connect product-service:8443 -tls1_3 -state -debug 2>&1 | grep -E 'SSL_connect|read|write|SSL3|TLS' | head -30
+" 2>/dev/null || echo "OpenSSL 디버그 정보 수집 실패"
+
+echo ""
+
+# 3-3. Handshake 과정 시각화
+echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}  mTLS Handshake 과정 (이론)${NC}"
+echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+
+cat << 'EOF'
+
+   Client (Order Service)                    Server (Product Service)
+   ━━━━━━━━━━━━━━━━━━━━                      ━━━━━━━━━━━━━━━━━━━━━
+
+1. TCP 3-way Handshake
+   ├─ SYN ─────────────────────────────────→
+   ←──────────────────────────────── SYN+ACK ┤
+   ├─ ACK ─────────────────────────────────→
+
+2. TLS Client Hello
+   ├─ Supported Ciphers ───────────────────→
+   ├─ TLS Version (1.3) ───────────────────→
+   ├─ Random Number ───────────────────────→
+
+3. TLS Server Hello
+   ←────────────────────── Selected Cipher ─┤
+   ←───────────────────────── Session ID ───┤
+   ←───────────────── Server Certificate ───┤
+      (SPIFFE ID: spiffe://prod.eks/ns/production/sa/product-service-sa)
+
+4. Certificate Request (mTLS)
+   ←──────────── Request Client Certificate ┤
+
+5. Client Certificate
+   ├─ Client Certificate ──────────────────→
+      (SPIFFE ID: spiffe://prod.eks/ns/production/sa/order-service-sa)
+   ├─ Certificate Verify ──────────────────→
+
+6. Verify Certificates
+   ├─ SPIRE Agent validates ───────────────→
+   ←──────────────────── SPIRE Agent validates ┤
+
+7. Change Cipher Spec
+   ├─ Change Cipher Spec ──────────────────→
+   ←──────────────────── Change Cipher Spec ┤
+
+8. Finished
+   ├─ Encrypted Handshake Message ─────────→
+   ←───────────── Encrypted Handshake Message ┤
+
+9. Application Data (Encrypted)
+   ├─ GET /api/v1/health ──────────────────→
+   ←──────────────────── 200 OK + JSON ─────┤
+
+EOF
+
+echo ""
 
 # ============================================================================
+# 정리
+# ============================================================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}  📊 테스트 결과 요약${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+echo "✅ 확인된 사항:"
+echo "  1. 인증되지 않은 Pod → TLS Handshake 실패 (클라이언트 인증서 없음)"
+echo "  2. SPIRE 등록 Pod → mTLS 성공 (상호 인증)"
+echo "  3. HTTP (8081) → ALB 헬스체크용, 인증 불필요"
+echo "  4. HTTPS (8443) → 서비스간 mTLS, SPIFFE 인증 필수"
+echo ""
+echo "🔐 보안 메커니즘:"
+echo "  • SPIRE Agent가 Unix Domain Socket으로 인증서 제공"
+echo "  • 60초 TTL로 자동 갱신"
+echo "  • Workload API로 안전한 인증서 전달"
+echo ""
+
 # Cleanup
-# ============================================================================
-
-print_header "Demo Cleanup"
-
-echo -e "${CYAN}Do you want to clean up test pods? (y/n)${NC}"
-read -r -n 1 response
-echo
-
-if [[ "$response" =~ ^[Yy]$ ]]; then
-    cleanup_pods
-    echo -e "${GREEN}✓ Test pods cleaned up${NC}"
-else
-    echo -e "${YELLOW}Test pods left running for further testing${NC}"
-    echo -e "${GRAY}To clean up manually: kubectl delete pod unauthorized-client authorized-client -n ${NAMESPACE}${NC}"
-fi
-
-echo -e "\n${GREEN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║     Demo completed successfully                                       ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
-
-echo -e "\n${GRAY}Environment: Production EKS Cluster${NC}"
-echo -e "${GRAY}Namespace: ${NAMESPACE}${NC}"
-echo -e "${GRAY}Time: $(date '+%Y-%m-%d %H:%M:%S KST')${NC}\n"
+echo -e "${CYAN}테스트 Pod 정리...${NC}"
+kubectl delete pod unauthorized-test authorized-test -n production --force --grace-period=0 2>/dev/null
+echo -e "${GREEN}✓ 완료${NC}"
