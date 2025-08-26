@@ -1,160 +1,45 @@
-# MSA Ingress Configuration
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: msa-ingress
   namespace: production
-  labels:
-    app: msa
-    environment: production
   annotations:
-    # Ingress Class
-    kubernetes.io/ingress.class: alb
-    
-    # ALB Configuration
+    # 기존 어노테이션
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/backend-protocol: HTTP
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
-    
-    # Health Check Configuration
-    alb.ingress.kubernetes.io/healthcheck-path: /api/v1/health
-    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
-    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
-    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
-    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
-    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
-    alb.ingress.kubernetes.io/unhealthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/success-codes: "200"
     
-    # Target Group Configuration
-    alb.ingress.kubernetes.io/target-group-attributes: |
-      deregistration_delay.timeout_seconds=30,
-      stickiness.enabled=true,
-      stickiness.type=app_cookie,
-      stickiness.app_cookie.cookie_name=MSASESSION,
-      stickiness.app_cookie.duration_seconds=86400
-    
-    # Load Balancer Attributes
-    alb.ingress.kubernetes.io/load-balancer-attributes: |
-      idle_timeout.timeout_seconds=60,
-      routing.http2.enabled=true,
-      access_logs.s3.enabled=true,
-      access_logs.s3.bucket=eks-alb-logs-928475935003,
-      access_logs.s3.prefix=production
-    
-    # SSL Configuration (if using HTTPS)
-    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:928475935003:certificate/your-cert-id
-    # alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
-    # alb.ingress.kubernetes.io/ssl-redirect: "443"
-    
-    # Security Group
-    alb.ingress.kubernetes.io/security-groups: sg-04910c18bd8f8500a,sg-0d6f1037ede9e7a25
-    
-    # Subnet Selection
-    alb.ingress.kubernetes.io/subnets: subnet-00a1df66e269743b3,subnet-057b1399a4c256f74
-    
-    # Tags
-    alb.ingress.kubernetes.io/tags: |
-      Environment=production,
-      Team=platform,
-      Application=msa
-    
-    # WAF (optional)
-    # alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:ap-northeast-2:928475935003:regional/webacl/your-waf-acl
+    # 어노테이션
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-TLS13-1-2-2021-06"
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-northeast-2:928475935003:certificate/4cc92cae-e303-4ecf-a4f4-63c9f591f0d3"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": {"Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
     
 spec:
   ingressClassName: alb
-  
-  # TLS Configuration (if using HTTPS)
-  # tls:
-  #   - hosts:
-  #       - api.yourdomain.com
-  #     secretName: tls-secret
-  
   rules:
-    # Default Backend (optional)
-    # - http:
-    #     paths:
-    #       - path: /
-    #         pathType: Prefix
-    #         backend:
-    #           service:
-    #             name: default-backend
-    #             port:
-    #               number: 80
-    
-    # Product Service Routes
-    - http:
-        paths:
-          - path: /api/v1/products
-            pathType: Prefix
-            backend:
-              service:
-                name: product-service
-                port:
-                  number: 80
-          - path: /api/v1/products/*
-            pathType: Prefix
-            backend:
-              service:
-                name: product-service
-                port:
-                  number: 80
-    
-    # Order Service Routes
-    - http:
-        paths:
-          - path: /api/v1/orders
-            pathType: Prefix
-            backend:
-              service:
-                name: order-service
-                port:
-                  number: 80
-          - path: /api/v1/orders/*
-            pathType: Prefix
-            backend:
-              service:
-                name: order-service
-                port:
-                  number: 80
-    
-    # Health Check Endpoint (for ALB)
-    - http:
-        paths:
-          - path: /health
-            pathType: Exact
-            backend:
-              service:
-                name: product-service  # or create a dedicated health service
-                port:
-                  number: 80
----
-# ArgoCD Ingress (optional)
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: argocd-ingress
-  namespace: argocd
-  annotations:
-    kubernetes.io/ingress.class: alb
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/backend-protocol: HTTP
-    alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
-    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-2:928475935003:certificate/your-cert-id
-    # alb.ingress.kubernetes.io/ssl-redirect: "443"
-spec:
-  ingressClassName: alb
-  rules:
-    - http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: argocd-server
-                port:
-                  number: 80
+  - host: api.cloudwave10.shop
+    http:
+      paths:
+      - path: /api/v1/health
+        pathType: Exact
+        backend:
+          service:
+            name: order-service
+            port:
+              number: 8080
+      - path: /api/v1/orders
+        pathType: Prefix
+        backend:
+          service:
+            name: order-service
+            port:
+              number: 8080
+      - path: /api/v1/products
+        pathType: Prefix
+        backend:
+          service:
+            name: product-service
+            port:
+              number: 8081
