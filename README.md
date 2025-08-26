@@ -124,6 +124,7 @@ sequenceDiagram
     Ingress-->>ALB: Response
     ALB-->>User: HTTP Response
 ```
+<img width="672" height="841" alt="스크린샷 2025-08-19 13 43 36" src="https://github.com/user-attachments/assets/4dd38cfc-a12a-41f1-9bed-355cf57fe8f4" />
 
 ## 🔧 Core Components
 
