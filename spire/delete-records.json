@@ -1,0 +1,30 @@
+{
+  "Changes": [
+    {
+      "Action": "DELETE",
+      "ResourceRecordSet": {
+        "Name": "_2b5d2117a6715d1932deb0fb4659d028.cloudwave10.shop.",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [
+          {
+            "Value": "\"_cbfc1f91797b3729362e293a9fc39a0d.xlfgrmvvlj.acm-validations.aws.\""
+          }
+        ]
+      }
+    },
+    {
+      "Action": "DELETE",
+      "ResourceRecordSet": {
+        "Name": "_92f62a263d19ebf6b43cfa9620dc4182.api.cloudwave10.shop.",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [
+          {
+            "Value": "\"_307b1380e238417d3bb1fa961090704c.xlfgrmvvlj.acm-validations.aws.\""
+          }
+        ]
+      }
+    }
+  ]
+}

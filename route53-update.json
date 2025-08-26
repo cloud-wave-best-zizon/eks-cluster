@@ -1,0 +1,14 @@
+{
+  "Changes": [{
+    "Action": "UPSERT",
+    "ResourceRecordSet": {
+      "Name": "api.cloudwave10.shop",
+      "Type": "A",
+      "AliasTarget": {
+        "HostedZoneId": "ZWKZPGTI48KDX",
+        "DNSName": "dualstack.k8s-producti-msaingre-a832bcc2c1-526017438.ap-northeast-2.elb.amazonaws.com",
+        "EvaluateTargetHealth": true
+      }
+    }
+  }]
+}
