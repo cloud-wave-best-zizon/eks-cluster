@@ -68,3 +68,5 @@ subjects:
 - kind: ServiceAccount
   name: spire-agent
   namespace: spire
+
+  
