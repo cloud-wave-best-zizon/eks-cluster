@@ -259,4 +259,7 @@ spec:
                 --config compression.type=gzip
               
               echo "Listing all topics..."
-              kafka-topics --list --bootstrap-server kafka-service.production.svc.cluster.local:9092
+              kafka-topics --list --bootstrap-server kafka-service.production.svc.cluster.local:9092        storageClassName: gp3
+        resources:
+          requests:
+            storage: 20Gi
