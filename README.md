@@ -1,6 +1,6 @@
 # EKS Production Cluster Architecture
 
-## 🚀 Overview
+##  Overview
 Production MSA (Microservice Architecture) environment running on Amazon EKS in ap-northeast-2 region.
 
 ### 📊 Cluster Statistics
@@ -9,7 +9,7 @@ Production MSA (Microservice Architecture) environment running on Amazon EKS in 
 - **Namespaces**: 10
 - **Load Balancers**: 4 (1 ALB, 3 NLB)
 
-## 🏗️ Architecture Diagram
+## 🏗 Architecture Diagram
 
 ```mermaid
 graph TB
@@ -23,7 +23,7 @@ graph TB
     classDef monitoring fill:#00bcd4,stroke:#fff,stroke-width:2px,color:#fff
 
     %% Internet Layer
-    Internet[🌐 Internet]:::internet
+    Internet[ Internet]:::internet
     
     %% ALB Layer
     Internet --> ALB[Application Load Balancer<br/>k8s-producti-msaingre-*.elb.amazonaws.com]:::alb
@@ -101,7 +101,7 @@ graph TB
     PodOrder2 -.->|IAM Role| DynamoDB
 ```
 
-## 📋 Request Flow Sequence
+##  Request Flow Sequence
 
 ```mermaid
 sequenceDiagram
@@ -126,7 +126,7 @@ sequenceDiagram
 ```
 <img width="672" height="841" alt="스크린샷 2025-08-19 13 43 36" src="https://github.com/user-attachments/assets/4dd38cfc-a12a-41f1-9bed-355cf57fe8f4" />
 
-## 🔧 Core Components
+##  Core Components
 
 ### Infrastructure
 | Component | Details |
@@ -155,7 +155,7 @@ sequenceDiagram
 | i-0ca8f63396c2f5a20 | Bottlerocket (Karpenter) | Private 2c | 10.1.12.67 |
 | i-0e8fcb63c2579bbad | Bottlerocket (Karpenter) | Private 2c | 10.1.12.192 |
 
-## 🎯 Microservices
+##  Microservices
 
 ### Product Service
 - **Deployment**: 2 replicas
@@ -181,7 +181,7 @@ sequenceDiagram
 - **Port**: 9092
 - **Service Type**: Headless
 
-## 📊 Monitoring Stack
+##  Monitoring Stack
 
 ```mermaid
 graph LR
@@ -200,7 +200,7 @@ graph LR
     Tempo --> Grafana
 ```
 
-## 🚀 System Components
+##  System Components
 
 | Component | Purpose | Namespace |
 |-----------|---------|-----------|
@@ -211,7 +211,7 @@ graph LR
 | **EBS CSI Driver** | Storage management | kube-system |
 | **Metrics Server** | Resource metrics | kube-system |
 
-## 📝 Ingress Rules
+##  Ingress Rules
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -240,7 +240,7 @@ spec:
               number: 80
 ```
 
-## 🔒 Security Configuration
+##  Security Configuration
 
 ### Network Security
 - ✅ Worker nodes in private subnets
@@ -259,7 +259,7 @@ spec:
 - ✅ TLS for service-to-service communication
 - ✅ Secrets management via K8s Secrets
 
-## 📦 Storage
+##  Storage
 
 | Storage Class | Provisioner | Type | Binding Mode |
 |--------------|-------------|------|--------------|
@@ -278,7 +278,7 @@ graph LR
     Validate --> Monitor
 ```
 
-## 📌 Access Points
+##  Access Points
 
 ### External Access
 - **ALB Endpoint**: http://k8s-producti-msaingre-a832bcc2c1-1931180001.ap-northeast-2.elb.amazonaws.com
@@ -290,7 +290,7 @@ graph LR
 - **Order Service**: `/api/v1/orders`
 - **Health Check**: `/api/v1/health`
 
-## 🛠️ Deployment Commands
+##  Deployment Commands
 
 ```bash
 # Deploy with kubectl
@@ -309,14 +309,14 @@ kubectl scale deployment product-service --replicas=3 -n production
 kubectl port-forward service/product-service 8080:80 -n production
 ```
 
-## 📈 Performance Metrics
+##  Performance Metrics
 
 - **Target CPU Utilization**: 70%
 - **Request Timeout**: 30s
 - **Health Check Interval**: 15s
 - **Pod Disruption Budget**: 1 (minimum available)
 
-## 🔍 Troubleshooting
+##  Troubleshooting
 
 ### Common Issues
 
